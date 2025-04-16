@@ -1,12 +1,10 @@
 import streamlit as st
 import requests
-import os
-from dotenv import load_dotenv
 import firebase_admin
-from firebase_admin import credentials, firestore, auth
+from firebase_admin import credentials, firestore, auth, initialize_app
+import json
 
-# Load environment variables
-load_dotenv()
+# Streamlit Page Configuration
 st.set_page_config(page_title="MealMate", page_icon="🍽️")
 
 # Inject Tailwind CSS and animations (AOS)
@@ -24,14 +22,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Firebase initialization
-if not firebase_admin._apps:
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-    cred_path = os.path.join(BASE_DIR, "firebase", "credentials.json")
-    cred = credentials.Certificate(cred_path)
-    firebase_admin.initialize_app(cred)
+firebase_creds = st.secrets["firebase"]["credentials"]
+cred = credentials.Certificate(json.loads(firebase_creds))
 
-# Get API Key from environment variables
-API_KEY = os.getenv('SPOONACULAR_API_KEY')
+if not firebase_admin._apps:
+    initialize_app(cred)
+
+# Get API Key from secrets
+API_KEY = st.secrets["api_keys"]["spoonacular"]
 
 # Initialize Firestore
 db = firestore.client()
