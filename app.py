@@ -23,14 +23,17 @@ st.markdown("""
 
 # Firebase initialization
 firebase_creds = st.secrets["firebase"]["credentials"]
+
 try:
-    cred = credentials.Certificate(json.loads(firebase_creds))
+    # Initialize Firebase only if it hasn't been initialized yet
     if not firebase_admin._apps:
+        cred = credentials.Certificate(json.loads(firebase_creds))
         initialize_app(cred)
 except json.JSONDecodeError as e:
     st.error(f"Error decoding Firebase credentials: {e}")
 except Exception as e:
     st.error(f"Firebase initialization failed: {e}")
+
 # Get API Key from secrets
 API_KEY = st.secrets["api_keys"]["spoonacular"]
 
