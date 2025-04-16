@@ -2,4 +2,4 @@
 firebase/credentials.json
 __pycache__/
 .DS_Store
-secrets.toml
+.streamlit/secrets.toml
