@@ -2,7 +2,11 @@ import streamlit as st
 import requests
 import firebase_admin
 from firebase_admin import credentials, firestore, auth, initialize_app
-import json
+from dotenv import load_dotenv
+import os
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Streamlit Page Configuration
 st.set_page_config(page_title="MealMate", page_icon="🍽️")
@@ -22,26 +26,22 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Firebase initialization
-firebase_creds = st.secrets["firebase"]["credentials"]
-
 try:
-    # Initialize Firebase only if it hasn't been initialized yet
     if not firebase_admin._apps:
-        cred = credentials.Certificate(json.loads(firebase_creds))
+        cred = credentials.Certificate("firebase/credentials.json")  # Load credentials from JSON file
         initialize_app(cred)
-except json.JSONDecodeError as e:
-    st.error(f"Error decoding Firebase credentials: {e}")
 except Exception as e:
     st.error(f"Firebase initialization failed: {e}")
 
-# Get API Key from secrets
-API_KEY = st.secrets["api_keys"]["spoonacular"]
+# Get API Key from .env
+API_KEY = os.getenv("SPOONACULAR_API_KEY")
 
 # Initialize Firestore
 db = firestore.client()
 
 # Function to fetch recipe suggestions
 def get_recipes(ingredients, diet=""):
+    # Step 1: Find recipes by ingredients
     url = f"https://api.spoonacular.com/recipes/findByIngredients?ingredients={','.join(ingredients)}&diet={diet}&number=5&apiKey={API_KEY}"
     response = requests.get(url)
     
@@ -49,7 +49,25 @@ def get_recipes(ingredients, diet=""):
         st.error("Error fetching data from Spoonacular API. Please try again later.")
         return []
     
-    return response.json()
+    recipes = response.json()
+    
+    # Step 2: Fetch detailed information for each recipe
+    detailed_recipes = []
+    for recipe in recipes:
+        recipe_id = recipe['id']
+        info_url = f"https://api.spoonacular.com/recipes/{recipe_id}/information?includeNutrition=true&apiKey={API_KEY}"
+        info_response = requests.get(info_url)
+        
+        if info_response.status_code == 200:
+            detailed_recipes.append(info_response.json())
+        else:
+            st.error(f"Failed to fetch detailed information for recipe ID {recipe_id}.")
+    
+    return detailed_recipes
+
+# Function to generate a shareable link
+def generate_shareable_link(recipe):
+    return f"https://www.spoonacular.com/recipes/{recipe['id']}/{recipe['title'].replace(' ', '-')}"
 
 # Function to fetch ingredient suggestions (autocomplete)
 def get_ingredient_suggestions(query):
@@ -62,19 +80,10 @@ def get_ingredient_suggestions(query):
     
     return [ingredient['name'] for ingredient in response.json()]
 
-# Function to generate a shareable link
-def generate_shareable_link(recipe):
-    return f"https://www.spoonacular.com/recipes/{recipe['id']}/{recipe['title'].replace(' ', '-')}"
-
-
-# Streamlit UI configuration
-st.title("MealMate - Dynamic Recipe Generator 🍽️")
-st.subheader("Enter your ingredients and let MealMate suggest delicious recipes!")
-
 # Firebase Authentication (Login/Logout)
 def login_user():
-    email = st.text_input("Email", key="email")
-    password = st.text_input("Password", type="password", key="password")
+    email = st.text_input("Email", key="email_login")
+    password = st.text_input("Password", type="password", key="password_login")
     
     if st.button("Login"):
         try:
@@ -89,12 +98,40 @@ def logout_user():
         del st.session_state["user"]
         st.success("Logged out successfully")
 
+# Firebase Signup
+def signup_user():
+    st.subheader("Create an Account")
+    email = st.text_input("Email", key="email_signup")
+    password = st.text_input("Password", type="password", key="password_signup")
+    
+    if st.button("Sign Up"):
+        try:
+            user = auth.create_user(email=email, password=password)
+            st.success(f"Account created successfully! Welcome, {user.email}")
+            st.session_state["user"] = user
+        except Exception as e:
+            st.error(f"Signup failed: {e}")
+
+# Streamlit UI configuration
+st.title("MealMate - Dynamic Recipe Generator 🍽️")
+st.subheader("Enter your ingredients and let MealMate suggest delicious recipes!")
+
+# Authentication Section
 if "user" in st.session_state:
     st.write(f"Logged in as {st.session_state['user'].email}")
-    if st.button("Logout"):
-        logout_user()
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        if st.button("Logout"):
+            logout_user()
+    with col2:
+        if st.button("View Favorites"):
+            st.session_state["show_favorites"] = True
 else:
-    login_user()
+    tab1, tab2 = st.tabs(["Login", "Sign Up"])
+    with tab1:
+        login_user()
+    with tab2:
+        signup_user()
 
 # Ingredient input (autocomplete and manual)
 ingredient_input = st.text_input("Enter an ingredient to get suggestions:", key="ingredient_input")
@@ -118,26 +155,41 @@ if ingredients:
         for recipe in recipes:
             st.markdown(f'<div class="bg-white rounded-lg shadow-lg p-5 mb-5" data-aos="fade-up">', unsafe_allow_html=True)
             st.markdown(f'<h3 class="text-xl font-bold text-orange-600">{recipe["title"]}</h3>', unsafe_allow_html=True)
-            st.image(f"https://spoonacular.com/recipeImages/{recipe['id']}-312x231.jpg", use_container_width=True)
+            st.image(recipe['image'], use_container_width=True)
+            
             prep_time = recipe.get("readyInMinutes", "N/A")
             servings = recipe.get("servings", "N/A")
             st.markdown(f'<p class="text-sm text-gray-700">Prep Time: {prep_time} minutes | Servings: {servings}</p>', unsafe_allow_html=True)
-            st.write("**Ingredients:**")
+            
+            # Ingredients
             ingredients = recipe.get('extendedIngredients', [])
             if ingredients:
                 st.write("**Ingredients:**")
-                st.write(", ".join([ingredient['name'] for ingredient in ingredients]))
+                st.write(", ".join([ingredient['original'] for ingredient in ingredients]))
             else:
                 st.write("No ingredients listed.")
-            st.write("**Instructions:**")
-            st.write(recipe.get("instructions", "No instructions available"))
+            
+            # Instructions
+            instructions = recipe.get("instructions", "No instructions available")
+            if instructions:
+                st.write("**Instructions:**")
+                st.markdown(instructions.replace("\n", "<br>"), unsafe_allow_html=True)  # Format instructions with line breaks
+            else:
+                st.write("No instructions available.")
             
             # Nutritional Information
+            # Nutritional Information
             if recipe.get('nutrition'):
-                st.write("#### Nutritional Information:")
-                for nutrient in recipe['nutrition']['nutrients']:
-                    st.write(f"{nutrient['title']}: {nutrient['amount']} {nutrient['unit']}")
-
+               st.write("#### Nutritional Information:")
+               nutrients = recipe['nutrition'].get('nutrients', [])
+               for nutrient in nutrients:
+                # Check if all required keys exist
+                     title = nutrient.get('title', 'Unknown Nutrient')
+                     amount = nutrient.get('amount', 'N/A')
+                     unit = nutrient.get('unit', '')
+                     st.write(f"{title}: {amount} {unit}")
+            else:
+                st.write("No nutritional information available.")
             # Shareable link
             shareable_link = generate_shareable_link(recipe)
             st.markdown(f'<a href="{shareable_link}" class="bg-orange-500 text-white py-2 px-4 rounded-md hover:bg-orange-600" target="_blank">Share Recipe</a>', unsafe_allow_html=True)
@@ -160,7 +212,7 @@ else:
     st.info("Please enter ingredients to get recipe suggestions.")
 
 # Display favorites (if user is logged in)
-if "user" in st.session_state:
+if "user" in st.session_state and st.session_state.get("show_favorites", False):
     user = st.session_state["user"]
     favorites_ref = db.collection("favorites").document(user.uid)
     favorites_doc = favorites_ref.get()
